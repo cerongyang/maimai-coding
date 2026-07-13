@@ -1,0 +1,325 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fruit Storm Snake Game</title>
+    <style>
+        body {
+            background-color: #1a1a1a;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            user-select: none;
+        }
+        #ui-panel {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 400px;
+            margin-bottom: 15px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        #game-container {
+            position: relative;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.7);
+            border-radius: 10px;
+            overflow: hidden;
+            border: 3px solid #333;
+        }
+        canvas {
+            background-color: #111;
+            display: block;
+        }
+        .powerup-indicator {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+            display: none;
+            box-shadow: 0 0 10px rgba(255,255,255,0.2);
+            animation: pulse 1s infinite alternate;
+        }
+        @keyframes pulse {
+            from { transform: scale(1); }
+            to { transform: scale(1.05); }
+        }
+        #instructions {
+            margin-top: 15px;
+            font-size: 14px;
+            color: #888;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-panel">
+        <div>Score: <span id="score">0</span></div>
+        <div id="active-powerup" class="powerup-indicator"></div>
+    </div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="400" height="400"></canvas>
+    </div>
+
+    <div id="instructions">
+        Use your keyboard <b>Arrow Keys</b> or <b>WASD</b> to steer.<br>
+        Eat the orange flashing block to trigger a <b>Fruit Storm!</b>
+    </div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+const powerupEl = document.getElementById('active-powerup');
+
+// Grid configuration
+const gridSize = 20;
+const tileCount = canvas.width / gridSize;
+
+// Game State Values
+let snake = [];
+let dx = 1;
+let dy = 0;
+let score = 0;
+let baseSpeed = 110;
+let gameInterval;
+
+// Entities Arrays & Objects
+let foods = []; // Holds active edible fruit positions
+let powerUp = null; // Single power-up item container
+
+// Active Power-up Management
+let activeBuff = null;
+let buffTimeout = null;
+
+const POWER_UP_TYPES = [
+    { name: 'FRUIT_STORM', color: '#ff9900', label: '🍊 FRUIT STORM ACTIVE!' },
+    { name: 'SHIELD', color: '#b600ff', label: '🛡️ SHIELD ACTIVE' }
+];
+
+function startGame() {
+    clearInterval(gameInterval);
+
+    // Position starting snake segments
+    snake = [
+        {x: 10, y: 10},
+        {x: 9, y: 10},
+        {x: 8, y: 10}
+    ];
+
+    dx = 1;
+    dy = 0;
+    score = 0;
+    scoreEl.innerText = score;
+
+    clearBuff();
+    foods = [];
+
+    spawnSingleFood();
+    spawnPowerUp(); // Force map power-up right away
+
+    gameInterval = setInterval(gameLoop, baseSpeed);
+}
+
+function gameLoop() {
+    updateSnake();
+    if (checkGameOver()) {
+        alert(`Game Over! Final Score: ${score}`);
+        startGame();
+        return;
+    }
+    draw();
+}
+
+function updateSnake() {
+    // Generate heading block point vectors
+    const head = { x: snake[0].x + dx, y: snake[0].y + dy };
+    snake.unshift(head);
+
+    let ateFood = false;
+
+    // Evaluate food positions backward loop
+    for (let i = foods.length - 1; i >= 0; i--) {
+        if (head.x === foods[i].x && head.y === foods[i].y) {
+            foods.splice(i, 1); // Extract element
+            score += 1;
+            scoreEl.innerText = score;
+            ateFood = true;
+            break;
+        }
+    }
+
+    if (ateFood) {
+        // Enforce safety fallback: grid should never be empty
+        if (foods.length === 0) {
+            spawnSingleFood();
+        }
+        // 45% trigger chance to deploy another item if none exists
+        if (!powerUp && Math.random() < 0.45) {
+            spawnPowerUp();
+        }
+    } else if (powerUp && head.x === powerUp.x && head.y === powerUp.y) {
+        applyPowerUp(powerUp.type);
+        powerUp = null;
+    } else {
+        snake.pop(); // Standard move step execution
+    }
+}
+
+function checkGameOver() {
+    const head = snake[0];
+
+    // Check boundary wall impact criteria
+    if (head.x < 0 || head.x >= tileCount || head.y < 0 || head.y >= tileCount) {
+        if (activeBuff === 'SHIELD') {
+            handleShieldSave();
+            return false;
+        }
+        return true;
+    }
+
+    // Check inner snake self tail collisions
+    for (let i = 1; i < snake.length; i++) {
+        if (head.x === snake[i].x && head.y === snake[i].y) {
+            if (activeBuff === 'SHIELD') {
+                handleShieldSave();
+                return false;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+function handleShieldSave() {
+    clearBuff(); // Consume shield buff
+    // Push head backward to prevent recursive cycle collision drops
+    snake[0].x -= dx;
+    snake[0].y -= dy;
+}
+
+function spawnSingleFood() {
+    foods.push({
+        x: Math.floor(Math.random() * tileCount),
+        y: Math.floor(Math.random() * tileCount)
+    });
+}
+
+function triggerFruitStorm(count) {
+    for (let i = 0; i < count; i++) {
+        spawnSingleFood();
+    }
+}
+
+function spawnPowerUp() {
+    // Pick randomly between Fruit Storm and Shield
+    const randomType = POWER_UP_TYPES[Math.floor(Math.random() * POWER_UP_TYPES.length)];
+    powerUp = {
+        x: Math.floor(Math.random() * tileCount),
+        y: Math.floor(Math.random() * tileCount),
+        type: randomType
+    };
+}
+
+function applyPowerUp(type) {
+    clearBuff();
+    activeBuff = type.name;
+
+    // Trigger Display Engine Modifications
+    powerupEl.style.display = 'block';
+    powerupEl.style.backgroundColor = type.color;
+    powerupEl.style.color = '#000';
+    powerupEl.innerText = type.label;
+
+    if (type.name === 'FRUIT_STORM') {
+        triggerFruitStorm(20); // Flood the arena with 20 items instantly
+    }
+
+    // Set countdown duration window to 6 seconds
+    buffTimeout = setTimeout(() => {
+        clearBuff();
+    }, 6000);
+}
+
+function clearBuff() {
+    if (activeBuff === 'FRUIT_STORM') {
+        foods = []; // Vaporize uneaten bonus elements
+        spawnSingleFood(); // Re-establish baseline core target
+    }
+    activeBuff = null;
+    powerupEl.style.display = 'none';
+    clearTimeout(buffTimeout);
+}
+
+function draw() {
+    // Clear Workspace Screen Canvas
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Draw Grid Guide Lines (Subtle retro detail)
+    ctx.strokeStyle = '#181818';
+    for (let i = 0; i < tileCount; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * gridSize, 0);
+        ctx.lineTo(i * gridSize, canvas.height);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, i * gridSize);
+        ctx.lineTo(canvas.width, i * gridSize);
+        ctx.stroke();
+    }
+
+    // Draw active foods array list items
+    ctx.fillStyle = '#ff3333';
+    foods.forEach(f => {
+        ctx.beginPath();
+        ctx.arc((f.x * gridSize) + gridSize/2, (f.y * gridSize) + gridSize/2, gridSize/2 - 2, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    // Draw active Power Up Box
+    if (powerUp) {
+        ctx.fillStyle = powerUp.type.color;
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = powerUp.type.color;
+        ctx.fillRect(powerUp.x * gridSize + 2, powerUp.y * gridSize + 2, gridSize - 4, gridSize - 4);
+        ctx.shadowBlur = 0; // Turn off glow properties
+    }
+
+    // Render Snake Blocks
+    snake.forEach((part, index) => {
+        const isHead = index === 0;
+        if (isHead) {
+            // Glow purple if shielded, else classic snake green
+            ctx.fillStyle = (activeBuff === 'SHIELD') ? '#b600ff' : '#4CAF50';
+        } else {
+            ctx.fillStyle = '#388E3C';
+        }
+        ctx.fillRect(part.x * gridSize + 1, part.y * gridSize + 1, gridSize - 2, gridSize - 2);
+    });
+}
+
+// Map Controls Routing Keydown Observers
+window.addEventListener('keydown', e => {
+    const key = e.key.toLowerCase();
+
+    if ((key === 'arrowup' || key === 'w') && dy !== 1) { dx = 0; dy = -1; }
+    if ((key === 'arrowdown' || key === 's') && dy !== -1) { dx = 0; dy = 1; }
+    if ((key === 'arrowleft' || key === 'a') && dx !== 1) { dx = -1; dy = 0; }
+    if ((key === 'arrowright' || key === 'd') && dx !== -1) { dx = 1; dy = 0; }
+});
+
+// Run Setup Engine
+startGame();
+</script>
+</body>
+</html>
